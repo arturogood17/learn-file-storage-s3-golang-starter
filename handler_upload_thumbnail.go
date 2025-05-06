@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -68,9 +70,17 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Error creating assets dir", err)
 		return
 	}
-
+	//Tengo que meter esto en assets en otras funciones. Desde aquí ---------
+	randURL := make([]byte, 32)
+	_, err = rand.Read(randURL)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating videothumbnail randURL", err)
+		return
+	}
+	randURLToString := base64.RawURLEncoding.EncodeToString(randURL)
 	fileExt := "." + strings.SplitAfter(mimetype, "/")[1]
-	filepath := filepath.Join(cfg.assetsRoot, videoID.String()+fileExt)
+	filepath := filepath.Join(cfg.assetsRoot, randURLToString+fileExt)
+	//Hasta aquí -------
 	newFile, err := os.Create(filepath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error creating file", err)
@@ -81,7 +91,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer newFile.Close()
-	URLData := fmt.Sprintf("http://localhost:%s/assets/%s%s", cfg.port, videoID.String(), fileExt)
+	URLData := fmt.Sprintf("http://localhost:%s/assets/%s%s", cfg.port, randURLToString, fileExt)
 	metadata.ThumbnailURL = &URLData
 	if err := cfg.db.UpdateVideo(metadata); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error updating thumbnail in database", err)
