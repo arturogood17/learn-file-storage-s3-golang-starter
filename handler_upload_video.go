@@ -10,12 +10,17 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
+	const uploadLimit = 1 << 30
+
+	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
+
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
 	if err != nil {
@@ -34,9 +39,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
 		return
 	}
-	const uploadLimit = 1 << 30
-
-	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -49,9 +51,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	const maxMemory = 10 << 20
-
-	r.ParseMultipartForm(maxMemory)
+	// const maxMemory = 10 << 20 No hizo esto. No sé por qué.
+	// r.ParseMultipartForm(maxMemory)
 
 	file, header, err := r.FormFile("video")
 	if err != nil {
@@ -71,7 +72,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	fExt := "." + strings.SplitAfter(videoMimeType, "/")[1]
-	uploadedF, err := os.CreateTemp("", "tubely-upload"+fExt)
+
+	uploadedF, err := os.CreateTemp("", "tubely-upload.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error creating temp file", err)
 		return
@@ -85,27 +87,51 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error copying file to temp file", err)
 		return
 	}
-	uploadedF.Seek(0, io.SeekStart)
 
-	base := make([]byte, 32)
-	_, err = rand.Read(base)
+	_, err = uploadedF.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't reset file pointer", err)
+		return
+	}
+
+	aspectRatio, err := getVideoAspectRatio(uploadedF.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error getting aspect ratio", err)
+		return
+	}
+
+	key := make([]byte, 32)
+	_, err = rand.Read(key)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error creating base id", err)
 		return
 	}
+	var baseToString string
+	if aspectRatio == "16:9" {
+		baseToString = "landscape/" + base64.RawURLEncoding.EncodeToString(key) + fExt
+	}
+	if aspectRatio == "9:16" {
+		baseToString = "portrait/" + base64.RawURLEncoding.EncodeToString(key) + fExt
+	}
+	if aspectRatio == "other" {
+		baseToString = "other/" + base64.RawURLEncoding.EncodeToString(key) + fExt
+	}
 
-	baseToString := base64.RawURLEncoding.EncodeToString(base) + fExt
-	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{Bucket: &cfg.s3Bucket,
-		Key: &baseToString, Body: uploadedF,
+	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
+		Bucket:      aws.String(cfg.s3Bucket),
+		Key:         aws.String(baseToString),
+		Body:        uploadedF,
 		ContentType: &videoMimeType})
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error put object output", err)
+		respondWithError(w, http.StatusInternalServerError, "Error uploading file to s3", err)
 		return
 	}
+
 	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, baseToString)
 	video.VideoURL = &videoURL
 	if err = cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error updating video on database side", err)
 		return
 	}
+	respondWithJSON(w, http.StatusOK, video)
 }
