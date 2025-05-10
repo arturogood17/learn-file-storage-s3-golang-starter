@@ -117,6 +117,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		baseToString = "other/" + base64.RawURLEncoding.EncodeToString(key) + fExt
 	}
 
+	fastStartFile, err := processVideoForFastStart(uploadedF.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error encoding video for fast start", err)
+		return
+	}
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(baseToString),
