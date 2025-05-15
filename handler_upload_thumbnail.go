@@ -1,10 +1,13 @@
 package main
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -46,11 +49,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fileMediaType := headers.Header.Get("Content-Type")
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error reading file", err)
-		return
-	}
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error getting video from database", err)
@@ -61,10 +59,29 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	base64String := base64.StdEncoding.EncodeToString(fileData)
+	ext, err := getExtension(fileMediaType)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error getting extension", err)
+		return
+	}
+	newPath := NewPath(videoIDString, cfg.assetsRoot)
 
-	dataURL := fmt.Sprintf("data:%v;base64,%v", fileMediaType, base64String)
-	video.ThumbnailURL = &dataURL
+	tempFile, err := os.Create(newPath + ext)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating temp file", err)
+		return
+	}
+
+	defer tempFile.Close()
+
+	if _, err = io.Copy(tempFile, file); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error copying content to temp. file", err)
+		return
+	}
+
+	tURL := fmt.Sprintf("http://localhost:%v/assets/%s%s", cfg.port, videoIDString, ext)
+
+	video.ThumbnailURL = &tURL
 
 	if err = cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Error updating video in database", err)
@@ -72,4 +89,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getExtension(ct string) (string, error) {
+	fields := strings.SplitAfter(ct, "/")
+	if len(fields) != 2 {
+		return "", errors.New("malformed Content-Type")
+	}
+	return "." + fields[1], nil
+}
+
+func NewPath(videoID, assetsPath string) string {
+	return filepath.Join(assetsPath, videoID)
 }
