@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -74,7 +76,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Error getting extension", err)
 		return
 	}
-	newPath := NewPath(videoIDString, cfg.assetsRoot)
+
+	key := make([]byte, 32) //tienes que hacer esto primero porque, si no, solo estás creando el url.
+	rand.Read(key)          //Recordar que el nombre del archivo es el pathfile hacia ese archivo
+	urlKey := base64.RawURLEncoding.EncodeToString(key)
+
+	newPath := NewPath(urlKey, cfg.assetsRoot)
 
 	tempFile, err := os.Create(newPath + ext)
 	if err != nil {
@@ -88,8 +95,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Error copying content to temp. file", err)
 		return
 	}
-
-	tURL := fmt.Sprintf("http://localhost:%v/assets/%s%s", cfg.port, videoIDString, ext)
+	//si haces rand.Read aquí y solo agregas el URL al video, no estás creando el path al video, solo el URL.
+	//El path hacia el file seguirá siendo otro y la imagen/video no se verá en la página.
+	tURL := fmt.Sprintf("http://localhost:%v/assets/%s%s", cfg.port, urlKey, ext)
 
 	video.ThumbnailURL = &tURL
 
