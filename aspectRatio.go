@@ -8,7 +8,7 @@ import (
 )
 
 func getVideoAspectRatio(filepath string) (string, error) {
-	type params struct {
+	var p struct {
 		Streams []struct {
 			Width  int `json:"width,omitempty"`
 			Height int `json:"height,omitempty"`
@@ -22,9 +22,12 @@ func getVideoAspectRatio(filepath string) (string, error) {
 		return "", err
 	}
 
-	p := params{}
 	if err := json.Unmarshal(b.Bytes(), &p); err != nil {
 		return "", err
+	}
+
+	if len(p.Streams) == 0 {
+		return "", errors.New("no video streams found")
 	}
 
 	if p.Streams[0].Height == 0 {
