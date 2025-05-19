@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -90,6 +91,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get back to beginning of tempfile", err)
+		return
+	}
+
 	key := make([]byte, 32)
 	rand.Read(key)
 	ext, err := getExtension(mimeType)
@@ -98,10 +105,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	base64Key := base64.RawURLEncoding.EncodeToString(key) + ext
+	var base64key string
+	if aspectRatio == "16:9" {
+		base64key = filepath.Join("landscape", base64.RawURLEncoding.EncodeToString(key)+ext)
+	}
+	if aspectRatio == "9:16" {
+		base64key = filepath.Join("portrait", base64.RawURLEncoding.EncodeToString(key)+ext)
+	}
+	if aspectRatio == "other" {
+		base64key = filepath.Join("other", base64.RawURLEncoding.EncodeToString(key)+ext)
+	}
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{Bucket: aws.String(cfg.s3Bucket),
-		Key:         aws.String(base64Key),
+		Key:         aws.String(base64key),
 		Body:        tempFile,
 		ContentType: aws.String(mimeType)})
 	if err != nil {
@@ -109,7 +125,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	newURLforVideo := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, base64Key)
+	newURLforVideo := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, base64key)
 
 	video.VideoURL = &newURLforVideo
 
