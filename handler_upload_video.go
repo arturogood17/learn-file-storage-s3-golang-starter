@@ -97,6 +97,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error moving moov atom", err)
+		return
+	}
+
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error opening processed file", err)
+		return
+	}
+
+	defer processedFile.Close()
+	defer os.Remove(processedFile.Name())
+
 	key := make([]byte, 32)
 	rand.Read(key)
 	ext, err := getExtension(mimeType)
@@ -118,7 +133,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{Bucket: aws.String(cfg.s3Bucket),
 		Key:         aws.String(base64key),
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String(mimeType)})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't upload objet to s3", err)
